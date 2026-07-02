@@ -1,0 +1,4 @@
+.venv-stage1/
+.venv-stage2/
+*.wav
+__pycache__/

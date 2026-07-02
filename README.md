@@ -7,6 +7,9 @@ recovered low-end / high-end via spectrograms.
 Take a **bad sample** (low sample rate, missing bands, background noise), push it
 through several models, and compare outputs + spectrograms.
 
+> **Also in this repo:** a separate **text→audio generation** MVP
+> (MusicGen → AudioSR) — see [HYBRID_PIPELINE.md](HYBRID_PIPELINE.md).
+
 ## What's included
 
 | Entry | Type | What it does |
