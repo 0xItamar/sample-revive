@@ -1,0 +1,5 @@
+.venv-stage1/
+.venv-stage2/
+raw_stage1.wav
+final_sota_sample.wav
+__pycache__/
