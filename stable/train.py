@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""LoRA fine-tuning for Stable Audio 3 (small-sfx) on your own samples.
+
+WHAT THIS DOES
+    Trains a small LoRA adapter so Stable Audio 3 generates one-shots in the
+    character of your own library. Only the LoRA adapters train (~10M params);
+    the 0.6B base DiT and the t5gemma text encoder stay frozen. That keeps it
+    feasible on a Mac (MPS) — ~1.5-3 s/step, ~35-40 min for 1500 steps.
+
+    Captions come from clap/captions.csv (see ../clap/api.py): each file's
+    prompt is its cleaned filename + CLAP acoustic descriptors.
+
+WHY THE INPAINTING CONFIG IS REQUIRED
+    small-sfx is a `diffusion_cond_inpaint` model: its forward pass always
+    expects `inpaint_mask` + `inpaint_masked_input` conditioning. We pass
+    `inpainting_config={"mask_kwargs": {}}` so the training step builds them.
+    `p_one_shot=0.5` makes ~half the steps train pure full-generation (mask the
+    whole clip, timestep=1) so the LoRA learns to generate complete samples from
+    the prompt, not just fill gaps. Without inpainting_config, training dies with
+    `KeyError: 'inpaint_mask'`.
+
+TIPS
+    - 1500-3000 steps (5-10 epochs of 552 kicks) is the sweet spot; more risks
+      overfitting a small library.
+    - rank 16 is a good default; raise to 32 for a stronger imprint.
+    - Apply the result: stable/api.py --lora stable/checkpoints/kicks_lora.safetensors
+      (blend with --lora-strength 0..1.5).
+
+CLI:
+    python -m stable.train --steps 1500 --batch 2 \
+        --captions clap/captions.csv --out stable/checkpoints/kicks_lora.safetensors
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+
+import torch
+import pytorch_lightning as pl
+
+from stable_audio_3.loading_utils import load_diffusion_cond
+from stable_audio_3.training.diffusion import DiffusionCondTrainingWrapper
+from stable_audio_3.data.dataset import SampleDataset, LocalDatasetConfig, collation_fn
+
+DS_RATIO = 4096
+DEFAULT_WEIGHTS = os.environ.get("SA3_WEIGHTS", "models/stable-audio-3-small-sfx")
+
+
+def load_captions(csv_path: str) -> dict:
+    """filepath -> prompt, keyed by absolute path (matches the dataset's info)."""
+    m = {}
+    with open(csv_path, newline="") as f:
+        for row in csv.DictReader(f):
+            m[os.path.abspath(row["filepath"])] = row["prompt"]
+    return m
+
+
+def train_lora(weights_dir: str, captions_csv: str, src_dir: str, out: str,
+               steps: int = 1500, batch: int = 2, lr: float = 1e-4, rank: int = 16,
+               sample_seconds: float = 3.0) -> str:
+    """Train a LoRA adapter and save it to `out`. Returns `out`."""
+    sample_size = max(1, round(sample_seconds * 44100 / DS_RATIO)) * DS_RATIO
+    captions = load_captions(captions_csv)
+    print(f"[train] {len(captions)} captions; sample_size={sample_size}")
+
+    def meta_fn(info, audio):
+        path = os.path.abspath(info.get("path", ""))
+        return {"prompt": captions.get(path, "kick drum, single hit, dry")}
+
+    with open(os.path.join(weights_dir, "model_config.json")) as f:
+        model_config = json.load(f)
+    print(f"[train] loading frozen base from {weights_dir}")
+    model = load_diffusion_cond(model_config, os.path.join(weights_dir, "model.safetensors"),
+                                device="cpu", model_half=False)
+
+    wrapper = DiffusionCondTrainingWrapper(
+        model, lr=lr,
+        optimizer_configs={"diffusion": {"optimizer": {"type": "AdamW", "config": {"lr": lr}}}},
+        lora_config={"rank": rank, "alpha": rank, "adapter_type": "lora"},
+        use_ema=False, timestep_sampler="logit_normal",
+        sample_rate=44100, sample_size=sample_size,
+        # required: small-sfx is an inpainting model (see module docstring).
+        inpainting_config={"mask_kwargs": {}}, p_one_shot=0.5,
+    )
+
+    ds_cfg = LocalDatasetConfig(id="samples", path=os.path.expanduser(src_dir),
+                                custom_metadata_fn=meta_fn)
+    dataset = SampleDataset([ds_cfg], sample_size=sample_size, sample_rate=44100,
+                            random_crop=False, force_channels="stereo", pad=True)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=True,
+                                         collate_fn=collation_fn, num_workers=0,
+                                         drop_last=True)
+
+    trainer = pl.Trainer(
+        accelerator="mps" if torch.backends.mps.is_available() else "cpu",
+        devices=1, max_steps=steps, precision="32-true",
+        enable_checkpointing=False, logger=False, log_every_n_steps=10,
+        gradient_clip_val=1.0,
+    )
+    trainer.fit(wrapper, loader)
+
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    wrapper.export_lora_safetensors(out)
+    print(f"[train] done. LoRA saved -> {out}")
+    return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--weights", default=DEFAULT_WEIGHTS)
+    ap.add_argument("--captions", default="clap/captions.csv")
+    ap.add_argument("--src", default=os.path.expanduser("~/Music/Kicks"))
+    ap.add_argument("--out", default="stable/checkpoints/kicks_lora.safetensors")
+    ap.add_argument("--steps", type=int, default=1500)
+    ap.add_argument("--batch", type=int, default=2)
+    ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--rank", type=int, default=16)
+    ap.add_argument("--sample-seconds", type=float, default=3.0)
+    args = ap.parse_args()
+    train_lora(args.weights, args.captions, args.src, args.out, steps=args.steps,
+               batch=args.batch, lr=args.lr, rank=args.rank,
+               sample_seconds=args.sample_seconds)
+
+
+if __name__ == "__main__":
+    main()

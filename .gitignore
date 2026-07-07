@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual envs (built locally, never committed)
+.venv-stage1/
+.venv-stage2/
+.venv-sa3/
+
+# Model weights / HF cache (multi-GB, pulled on demand)
+models/
+*.safetensors
+*.ckpt
+
+# Generated audio artifacts
+*.wav
+
+# --- committed deliverables: override the broad ignores above ---
+# CLAP-tagged A/B outputs (small, checked in as examples)
+!stable/outputs/**/*.wav
+# the trained LoRA adapter (20 MB, the fine-tune deliverable)
+!stable/checkpoints/kicks_lora.safetensors
+
+# macOS
+.DS_Store
