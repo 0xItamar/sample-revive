@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""LoRA fine-tuning for Stable Audio 3 (small-sfx) on your own samples.
+"""LoRA fine-tuning for Stable Audio 3 on your own samples.
 
 WHAT THIS DOES
     Trains a small LoRA adapter so Stable Audio 3 generates one-shots in the
     character of your own library. Only the LoRA adapters train (~10M params);
-    the 0.6B base DiT and the t5gemma text encoder stay frozen. That keeps it
-    feasible on a Mac (MPS) — ~1.5-3 s/step, ~35-40 min for 1500 steps.
+    the base DiT and the t5gemma text encoder stay frozen. That keeps training
+    focused on a small adapter while preserving the original checkpoint.
 
     Captions come from clap/captions.csv (see ../clap/api.py): each file's
     prompt is its cleaned filename + CLAP acoustic descriptors.
 
 WHY THE INPAINTING CONFIG IS REQUIRED
-    small-sfx is a `diffusion_cond_inpaint` model: its forward pass always
-    expects `inpaint_mask` + `inpaint_masked_input` conditioning. We pass
+    Stable Audio 3 inpainting checkpoints expect `inpaint_mask` +
+    `inpaint_masked_input` conditioning. We pass
     `inpainting_config={"mask_kwargs": {}}` so the training step builds them.
     `p_one_shot=0.5` makes ~half the steps train pure full-generation (mask the
     whole clip, timestep=1) so the LoRA learns to generate complete samples from
@@ -29,6 +29,8 @@ TIPS
 CLI:
     python -m stable.train --steps 1500 --batch 2 \
         --captions clap/captions.csv --out stable/checkpoints/kicks_lora.safetensors
+
+    python -m stable.train --config stable/configs/medium_kick_train.json
 """
 from __future__ import annotations
 
@@ -46,6 +48,17 @@ from stable_audio_3.data.dataset import SampleDataset, LocalDatasetConfig, colla
 
 DS_RATIO = 4096
 DEFAULT_WEIGHTS = os.environ.get("SA3_WEIGHTS", "models/stable-audio-3-small-sfx")
+DEFAULT_TRAIN_CONFIG = {
+    "weights": DEFAULT_WEIGHTS,
+    "captions": "clap/captions.csv",
+    "src": os.path.expanduser("~/Music/Kicks"),
+    "out": "stable/checkpoints/kicks_lora.safetensors",
+    "steps": 1500,
+    "batch": 2,
+    "lr": 1e-4,
+    "rank": 16,
+    "sample_seconds": 3.0,
+}
 
 
 def load_captions(csv_path: str) -> dict:
@@ -57,13 +70,40 @@ def load_captions(csv_path: str) -> dict:
     return m
 
 
+def load_train_config(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+
+def resolve_train_config(args: argparse.Namespace) -> dict:
+    cfg = dict(DEFAULT_TRAIN_CONFIG)
+    if args.config:
+        cfg.update(load_train_config(args.config))
+
+    override_keys = {
+        "weights": "weights",
+        "captions": "captions",
+        "src": "src",
+        "out": "out",
+        "steps": "steps",
+        "batch": "batch",
+        "lr": "lr",
+        "rank": "rank",
+        "sample_seconds": "sample_seconds",
+    }
+    for attr, key in override_keys.items():
+        value = getattr(args, attr)
+        if value is not None:
+            cfg[key] = value
+    return cfg
+
+
 def train_lora(weights_dir: str, captions_csv: str, src_dir: str, out: str,
                steps: int = 1500, batch: int = 2, lr: float = 1e-4, rank: int = 16,
                sample_seconds: float = 3.0) -> str:
     """Train a LoRA adapter and save it to `out`. Returns `out`."""
-    sample_size = max(1, round(sample_seconds * 44100 / DS_RATIO)) * DS_RATIO
     captions = load_captions(captions_csv)
-    print(f"[train] {len(captions)} captions; sample_size={sample_size}")
+    print(f"[train] {len(captions)} captions")
 
     def meta_fn(info, audio):
         path = os.path.abspath(info.get("path", ""))
@@ -71,6 +111,9 @@ def train_lora(weights_dir: str, captions_csv: str, src_dir: str, out: str,
 
     with open(os.path.join(weights_dir, "model_config.json")) as f:
         model_config = json.load(f)
+    sample_rate = int(model_config.get("sample_rate", 44100))
+    sample_size = max(1, round(sample_seconds * sample_rate / DS_RATIO)) * DS_RATIO
+    print(f"[train] sample_rate={sample_rate}; sample_size={sample_size}")
     print(f"[train] loading frozen base from {weights_dir}")
     model = load_diffusion_cond(model_config, os.path.join(weights_dir, "model.safetensors"),
                                 device="cpu", model_half=False)
@@ -80,14 +123,14 @@ def train_lora(weights_dir: str, captions_csv: str, src_dir: str, out: str,
         optimizer_configs={"diffusion": {"optimizer": {"type": "AdamW", "config": {"lr": lr}}}},
         lora_config={"rank": rank, "alpha": rank, "adapter_type": "lora"},
         use_ema=False, timestep_sampler="logit_normal",
-        sample_rate=44100, sample_size=sample_size,
-        # required: small-sfx is an inpainting model (see module docstring).
+        sample_rate=sample_rate, sample_size=sample_size,
+        # Required for Stable Audio 3 inpainting checkpoints.
         inpainting_config={"mask_kwargs": {}}, p_one_shot=0.5,
     )
 
     ds_cfg = LocalDatasetConfig(id="samples", path=os.path.expanduser(src_dir),
                                 custom_metadata_fn=meta_fn)
-    dataset = SampleDataset([ds_cfg], sample_size=sample_size, sample_rate=44100,
+    dataset = SampleDataset([ds_cfg], sample_size=sample_size, sample_rate=sample_rate,
                             random_crop=False, force_channels="stereo", pad=True)
     loader = torch.utils.data.DataLoader(dataset, batch_size=batch, shuffle=True,
                                          collate_fn=collation_fn, num_workers=0,
@@ -110,19 +153,21 @@ def train_lora(weights_dir: str, captions_csv: str, src_dir: str, out: str,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--weights", default=DEFAULT_WEIGHTS)
-    ap.add_argument("--captions", default="clap/captions.csv")
-    ap.add_argument("--src", default=os.path.expanduser("~/Music/Kicks"))
-    ap.add_argument("--out", default="stable/checkpoints/kicks_lora.safetensors")
-    ap.add_argument("--steps", type=int, default=1500)
-    ap.add_argument("--batch", type=int, default=2)
-    ap.add_argument("--lr", type=float, default=1e-4)
-    ap.add_argument("--rank", type=int, default=16)
-    ap.add_argument("--sample-seconds", type=float, default=3.0)
+    ap.add_argument("--config", default=None, help="Optional JSON training config.")
+    ap.add_argument("--weights", default=None)
+    ap.add_argument("--captions", default=None)
+    ap.add_argument("--src", default=None)
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--steps", type=int, default=None)
+    ap.add_argument("--batch", type=int, default=None)
+    ap.add_argument("--lr", type=float, default=None)
+    ap.add_argument("--rank", type=int, default=None)
+    ap.add_argument("--sample-seconds", dest="sample_seconds", type=float, default=None)
     args = ap.parse_args()
-    train_lora(args.weights, args.captions, args.src, args.out, steps=args.steps,
-               batch=args.batch, lr=args.lr, rank=args.rank,
-               sample_seconds=args.sample_seconds)
+    cfg = resolve_train_config(args)
+    train_lora(cfg["weights"], cfg["captions"], cfg["src"], cfg["out"],
+               steps=cfg["steps"], batch=cfg["batch"], lr=cfg["lr"],
+               rank=cfg["rank"], sample_seconds=cfg["sample_seconds"])
 
 
 if __name__ == "__main__":

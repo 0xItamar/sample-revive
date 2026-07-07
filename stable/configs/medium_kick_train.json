@@ -1,0 +1,13 @@
+{
+  "name": "medium_kick_train",
+  "description": "Train a Stable Audio 3 Medium LoRA adapter on kick one-shot samples.",
+  "weights": "models/stable-audio-3-medium",
+  "captions": "clap/captions.csv",
+  "src": "~/Music/Kicks",
+  "out": "stable/checkpoints/medium_kicks_lora.safetensors",
+  "steps": 1500,
+  "batch": 1,
+  "lr": 0.0001,
+  "rank": 16,
+  "sample_seconds": 1.0
+}
