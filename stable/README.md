@@ -74,6 +74,23 @@ Harness outputs are written under `stable/runs/` and ignored by Git:
 - `runs.jsonl` — one row per generation
 - `audio/*.wav` — generated files
 
+### Medium LoRA adapter flow
+
+Train a Medium kick adapter from a captioned kick one-shot folder:
+
+```bash
+python -m stable.train --config stable/configs/medium_kick_train.json
+```
+
+Then generate through the harness with the adapter:
+
+```bash
+python -m stable.harness --config stable/configs/medium_kick_lora.json
+```
+
+The default adapter path is `stable/checkpoints/medium_kicks_lora.safetensors`.
+It is intentionally ignored by Git; commit configs and logs, not trained weights.
+
 ### `StableAudio`
 | method | description |
 |---|---|

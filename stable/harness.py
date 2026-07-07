@@ -57,10 +57,16 @@ def run_harness(
     run_root: str,
     limit: int | None = None,
     weights_override: str | None = None,
+    lora_override: str | None = None,
+    lora_strength_override: float | None = None,
 ) -> str:
     cfg = load_config(config_path)
     if weights_override:
         cfg["weights"] = weights_override
+    if lora_override is not None:
+        cfg["lora"] = lora_override
+    if lora_strength_override is not None:
+        cfg["lora_strength"] = lora_strength_override
     seeds = list(cfg.get("seeds", []))
     if limit is not None:
         seeds = seeds[:limit]
@@ -148,8 +154,17 @@ def main() -> None:
     ap.add_argument("--run-root", default=DEFAULT_RUN_ROOT)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--weights", default=None, help="Override the config weights path.")
+    ap.add_argument("--lora", default=None, help="Override the config LoRA adapter path.")
+    ap.add_argument("--lora-strength", type=float, default=None)
     args = ap.parse_args()
-    run_harness(args.config, args.run_root, args.limit, args.weights)
+    run_harness(
+        args.config,
+        args.run_root,
+        args.limit,
+        args.weights,
+        args.lora,
+        args.lora_strength,
+    )
 
 
 if __name__ == "__main__":
