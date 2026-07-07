@@ -7,6 +7,41 @@ recovered low-end / high-end via spectrograms.
 Take a **bad sample** (low sample rate, missing bands, background noise), push it
 through several models, and compare outputs + spectrograms.
 
+---
+
+## Also in this repo: AI sample generation (Stable Audio 3 + CLAP)
+
+A separate pipeline to **generate drum/synth one-shots from text** with Stability
+AI's open-weight **Stable Audio 3**, and **fine-tune it (LoRA)** on your own
+sample library — auto-captioned with **CLAP**.
+
+| Module | What it is | Docs |
+|---|---|---|
+| [`clap/`](clap/README.md) | CLAP audio→text tagging API; auto-captions a sample folder | [clap/README.md](clap/README.md) |
+| [`stable/`](stable/README.md) | Stable Audio 3 generation API **+ LoRA fine-tuning** | [stable/README.md](stable/README.md) |
+
+Quickstart (in `.venv-sa3`, Python 3.11 — see [stable/README.md](stable/README.md)):
+
+```bash
+# 1. caption your samples with CLAP  ->  clap/captions.csv
+python -m clap.api --src ~/Music/Kicks --out clap/captions.csv
+
+# 2. generate one-shots from text (base model)
+python -m stable.api --prompt "deep 808 sub kick, single hit, dry" --n 8 --out out/
+
+# 3. LoRA fine-tune on your library, then generate in its character
+python -m stable.train --captions clap/captions.csv --src ~/Music/Kicks \
+    --out stable/checkpoints/kicks_lora.safetensors
+python -m stable.api --prompt "punchy kick, single hit, dry" \
+    --lora stable/checkpoints/kicks_lora.safetensors --out out/
+```
+
+Committed examples: the **CLAP mapping** in [`clap/captions.csv`](clap/captions.csv)
+(+ readable `captions.txt`), and seed-matched **before/after LoRA** outputs in
+[`stable/outputs/`](stable/outputs/).
+
+---
+
 ## What's included
 
 | Entry | Type | What it does |
