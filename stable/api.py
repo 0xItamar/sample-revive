@@ -137,7 +137,7 @@ class StableAudio:
         audio = audio.detach().to(torch.float32).cpu()
         if audio.dim() == 3:
             audio = audio[0]
-        return audio / audio.abs().max().clamp(min=1e-9)  # peak-normalize
+        return audio / audio.abs().max().clamp(min=1e-9) * 0.95  # leave headroom
 
     def generate_oneshots(self, prompt: str, n: int = 8, out_dir: str = "samples",
                           seconds: float = 1.0, steps: int = 8, cfg: float = 1.5,

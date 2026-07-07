@@ -14,6 +14,7 @@ models/
 
 # Generated audio artifacts
 *.wav
+stable/runs/
 
 # --- committed deliverables: override the broad ignores above ---
 # CLAP-tagged A/B outputs (small, checked in as examples)
