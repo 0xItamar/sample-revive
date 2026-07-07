@@ -49,6 +49,31 @@ python -m stable.api --prompt "punchy kick, single hit, dry" --n 8 --out out/
 python -m stable.api --prompt "..." --lora stable/checkpoints/kicks_lora.safetensors --lora-strength 0.7
 ```
 
+## Harnessed generation
+
+Use the harness when you need repeatable runs with prompt/model/seed settings
+logged next to the generated audio.
+
+```bash
+python -m stable.harness --config stable/configs/medium_kick_baseline.json --limit 1
+```
+
+The default medium config expects local weights at
+`models/stable-audio-3-medium`. Override that path for a machine-specific cache:
+
+```bash
+python -m stable.harness \
+    --config stable/configs/medium_kick_baseline.json \
+    --weights /path/to/stable-audio-3-medium \
+    --limit 1
+```
+
+Harness outputs are written under `stable/runs/` and ignored by Git:
+
+- `manifest.json` — full config plus per-output metadata
+- `runs.jsonl` — one row per generation
+- `audio/*.wav` — generated files
+
 ### `StableAudio`
 | method | description |
 |---|---|

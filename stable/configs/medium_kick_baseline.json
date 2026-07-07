@@ -1,0 +1,15 @@
+{
+  "name": "medium_kick_baseline",
+  "description": "Stable Audio 3 Medium baseline kick one-shot generation without LoRA.",
+  "weights": "models/stable-audio-3-medium",
+  "model_name": "medium",
+  "prompt": "single isolated electronic kick drum one shot, deep sub punch, sharp transient, short clean decay, dry studio sample, centered mono-compatible sound, no rhythm, no loop, no melody, no reverb, no background music",
+  "negative": "music, melody, loop, rhythm, beat, reverb, room ambience, pad, drone, sustained tone, vocals, noise, distortion, clipping",
+  "seconds": 1.0,
+  "steps": 8,
+  "cfg": 1.5,
+  "seeds": [300, 301, 302, 303],
+  "trim": false,
+  "lora": null,
+  "lora_strength": null
+}
